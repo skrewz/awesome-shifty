@@ -55,6 +55,7 @@ shifty.config.prompt_matchers = {
     ":",
     ""
 }
+shifty.config.delete_deserted = true
 
 local matchp = ""
 local index_cache = {}
@@ -793,7 +794,9 @@ function sweep()
                             tmr:connect_signal("timeout", f)
                             tmr:start()
                         else
-                            shifty.del(t)
+                            if shifty.config.delete_deserted then
+                                shifty.del(t)
+                            end
                         end
                     else
                         if awful.tag.getproperty(t, "visited") and
