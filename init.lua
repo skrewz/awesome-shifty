@@ -439,7 +439,7 @@ function shifty.del(tag)
     index_cache[scr][t.name] = idx
 
     -- remove tag
-    awful.tag.setscreen(t, nil)
+    awful.tag.delete(t)
 
     -- if the current tag is being deleted, restore from history
     if t == sel and #tags > 1 then
