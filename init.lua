@@ -353,8 +353,8 @@ function set(t, args)
 
     -- set tag properties and push the new tag table
     for i, tmp_tag in ipairs(tags) do
-        awful.tag.setproperty(tmp_tag, "index", i)
         awful.tag.setscreen(tmp_tag, scr)
+        awful.tag.setproperty(tmp_tag, "index", i)
     end
     for prop, val in pairs(props) do awful.tag.setproperty(t, prop, val) end
 
