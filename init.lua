@@ -16,6 +16,7 @@ local awful = require("awful")
 local wibox = require("wibox")
 local pairs = pairs
 local io = io
+local math = math
 local tonumber = tonumber
 local dbg= dbg
 local capi = {
@@ -339,7 +340,7 @@ function set(t, args)
         idx = pos2idx(props.position, scr)
         if t_idx and t_idx < idx then idx = idx - 1 end
     elseif shifty.config.remember_index and index_cache[scr][t.name] then
-        idx = index_cache[scr][t.name]
+        idx = math.min(index_cache[scr][t.name], #tags+1)
     elseif not t_idx then
         idx = #tags + 1
     end
