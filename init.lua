@@ -179,7 +179,7 @@ end
 
 --select : helper function chooses the first non-nil argument
 --@param args - table of arguments
-function select(args)
+local function select(args)
     for i, a in pairs(args) do
         if a ~= nil then
             return a
