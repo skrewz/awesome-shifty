@@ -26,8 +26,8 @@ local capi = {
     button = button,
     mouse = mouse,
     root = root,
-    timer = timer
 }
+local gears = require("gears")
 
 local shifty = {}
 
@@ -59,8 +59,9 @@ shifty.config.prompt_matchers = {
 shifty.config.delete_deserted = true
 
 local matchp = ""
-local index_cache = {}
-for i = 1, capi.screen.count() do index_cache[i] = {} end
+-- skrewz@20170208: commented; usefulness not certain (?)
+--local index_cache = {}
+--for i = 1, capi.screen.count() do index_cache[i] = {} end
 
 --name2tags: matches string 'name' to tag objects
 -- @param name : tag name to find
@@ -68,9 +69,9 @@ for i = 1, capi.screen.count() do index_cache[i] = {} end
 -- @return table of tag objects or nil
 function name2tags(name, scr)
     local ret = {}
-    local a, b = scr or 1, scr or capi.screen.count()
-    for s = a, b do
-        for i, t in ipairs(awful.tag.gettags(s)) do
+    --skrewwz@20170208: algorithm changed; "scr" needs to be re-integrated
+    for s in screen do
+        for i, t in ipairs(s.tags) do
             if name == t.name then
                 table.insert(ret, t)
             end
@@ -84,12 +85,30 @@ function name2tag(name, scr, idx)
     if ts then return ts[idx or 1] end
 end
 
+--substr_name2tags: finds tags by substring of name
+-- @param needle: what to search for
+-- @param scr: which screen to search in
+-- @return: table of tag objects or nil
+function substr_name2tags (needle,scr)
+    local ret = {}
+    local try_screens = {}
+    -- FIXME: respect any pased scr
+    for s in screen do
+        for i, t in ipairs(s.tags) do
+            if string.find(t.name,needle) then
+                table.insert(ret, t)
+            end
+        end
+    end
+    if #ret > 0 then return ret end
+end
+
 --tag2index: finds index of a tag object
 -- @param scr : screen number to look for tag on
 -- @param tag : the tag object to find
 -- @return the index [or zero] or end of the list
 function tag2index(scr, tag)
-    for i, t in ipairs(awful.tag.gettags(scr)) do
+    for i, t in ipairs(scr.tags) do
         if t == tag then return i end
     end
 end
@@ -100,17 +119,17 @@ end
 --@param no_selectall:
 function shifty.rename(tag, prefix, no_selectall)
     local theme = beautiful.get()
-    local t = tag or awful.tag.selected(capi.mouse.screen)
+    local t = tag or awful.screen.focused().selected_tag
 
     if t == nil then return end
 
-    local scr = awful.tag.getscreen(t)
+    local scr = t.screen
     local bg = nil
     local fg = nil
     local text = prefix or t.name
     local before = t.name
 
-    if t == awful.tag.selected(scr) then
+    if t == scr.selected_tag then
         bg = theme.bg_focus or '#535d6c'
         fg = theme.fg_urgent or '#ffffff'
     else
@@ -120,16 +139,24 @@ function shifty.rename(tag, prefix, no_selectall)
     
     local tag_index = tag2index(scr, t)
     -- Access to textbox widget in taglist
-    local tb_widget = shifty.taglist[scr].widgets[tag_index].widget.widgets[2].widget
+    -- skrewz@20170202: these are not widgets. They're labels. They are unlikely to be editable.
+    -- See function taglist.taglist_label(t, args) in awful.widget.taglist.
+    -- TODO: Workaround: what about a separate prompt-for-new-name wibox?
+    --local tb_widget = scr.mytaglist.widgets[tag_index].widget.widgets[2].widget
+    -- This is a bit of a workaround. The expectation is that you have a
+    -- mypromptbox on each screen:
+    -- See e.g. rc.lua on https://awesomewm.org/apidoc/documentation/17-porting-tips.md.html#v4
+    local tb_widget = scr.mypromptbox
     awful.prompt.run({
         fg_cursor = fg, bg_cursor = bg, ul_cursor = "single",
-        text = text, selectall = not no_selectall},
-        tb_widget,
-        function (name) if name:len() > 0 then t.name = name; end end,
-        completion,
-        awful.util.getdir("cache") .. "/history_tags",
-        nil,
-        function ()
+        text = text,
+        selectall = not no_selectall,
+        textbox = tb_widget,
+        exe_callback = function (name) if name:len() > 0 then t.name = name; end end,
+
+        completion_callback = completion,
+        history_path = awful.util.getdir("cache") .. "/history_tags",
+        done_callback = function ()
             if t.name == before then
                 if awful.tag.getproperty(t, "initial") then shifty.del(t) end
             else
@@ -138,8 +165,10 @@ function shifty.rename(tag, prefix, no_selectall)
             end
             tagkeys(capi.screen[scr])
             t:emit_signal("property::name")
-        end
-        )
+          end,
+        changed_callback = shifty.schedule_tag_statesave()
+        }
+    )
 end
 
 --send: moves client to tag[idx]
@@ -147,12 +176,12 @@ end
 -- @param idx the tag number to send a client to
 function send(idx)
     local scr = capi.client.focus.screen or capi.mouse.screen
-    local sel = awful.tag.selected(scr)
+    local sel = scr.selected_tag
     local sel_idx = tag2index(scr, sel)
-    local tags = awful.tag.gettags(scr)
+    local tags = scr.tags
     local target = awful.util.cycle(#tags, sel_idx + idx)
     awful.client.movetotag(tags[target], capi.client.focus)
-    awful.tag.viewonly(tags[target])
+    tags[target]:view_only()
 end
 
 function shifty.send_next() send(1) end
@@ -164,7 +193,7 @@ function shifty.send_prev() send(-1) end
 function pos2idx(pos, scr)
     local v = 1
     if pos and scr then
-        local tags = awful.tag.gettags(scr)
+        local tags = scr.tags
         for i = #tags , 1, -1 do
             local t = tags[i]
             if awful.tag.getproperty(t, "position") and
@@ -190,15 +219,16 @@ end
 --tagtoscr : move an entire tag to another screen
 --
 --@param scr : the screen to move tag to
---@param t : the tag to be moved [awful.tag.selected()]
+--@param t : the tag to be moved [scr.selected_tag]
 --@return the tag
 function shifty.tagtoscr(scr, t)
+    -- skrewz@20170202: shouldn't be relevant when called with screen objects
     -- break if called with an invalid screen number
-    if not scr or scr < 1 or scr > capi.screen.count() then return end
+    --if not scr or scr < 1 or scr > capi.screen.count() then return end
     -- tag to move
-    local otag = t or awful.tag.selected()
+    local otag = t or scr.selected_tag
 
-    awful.tag.setscreen(otag, scr)
+    otag.screen = scr
     -- set screen and then reset tag to order properly
     if #otag:clients() > 0 then
         for _ , c in ipairs(otag:clients()) do
@@ -230,17 +260,18 @@ function set(t, args)
 
     -- pick screen and get its tag table
     local scr = args.screen or
-    (not awful.tag.getscreen(t) and awful.tag.getscreen(preset)) or
-    awful.tag.getscreen(t) or
-    capi.mouse.screen
+      (not t.screen and preset.screen) or
+      t.screen or
+      awful.screen.focused()
 
     local clientstomove = nil
-    if scr > capi.screen.count() then scr = capi.screen.count() end
-    if awful.tag.getscreen(t) and scr ~= awful.tag.getscreen(t) then
+    --skrewz@20170202: if scr is an object, this shouldn't be necessary:
+    --if scr > capi.screen.count() then scr = capi.screen.count() end
+    if t.screen and scr ~= t.screen then
         shifty.tagtoscr(scr, t)
-        awful.tag.setscreen(t, nil)
+        t.screen = nil
     end
-    local tags = awful.tag.gettags(scr)
+    local tags = scr.tags
 
     -- try to guess position from the name
     local guessed_position = nil
@@ -325,7 +356,7 @@ function set(t, args)
     local rel_index = args.rel_index or
     preset.rel_index or
     shifty.config.defaults.rel_index
-    local sel = awful.tag.selected(scr)
+    local sel = scr.selected_tag
     --TODO: what happens with rel_idx if no tags selected
     local sel_idx = (sel and tag2index(scr, sel)) or 0
     local t_idx = tag2index(scr, t)
@@ -339,8 +370,9 @@ function set(t, args)
     elseif props.position then
         idx = pos2idx(props.position, scr)
         if t_idx and t_idx < idx then idx = idx - 1 end
-    elseif shifty.config.remember_index and index_cache[scr][t.name] then
-        idx = math.min(index_cache[scr][t.name], #tags+1)
+    -- skrewz@20170208: commented, usefulness not clear:
+    --elseif shifty.config.remember_index and index_cache[scr][t.name] then
+    --    idx = math.min(index_cache[scr][t.name], #tags+1)
     elseif not t_idx then
         idx = #tags + 1
     end
@@ -349,12 +381,13 @@ function set(t, args)
     if idx then
         if t_idx then table.remove(tags, t_idx) end
         table.insert(tags, idx, t)
-        index_cache[scr][t.name] = idx
+	-- skrewz@20170208: commented, usefulness not clear:
+        --index_cache[scr][t.name] = idx
     end
 
     -- set tag properties and push the new tag table
     for i, tmp_tag in ipairs(tags) do
-        awful.tag.setscreen(tmp_tag, scr)
+        tmp_tag.screen=scr
         awful.tag.setproperty(tmp_tag, "index", i)
     end
     for prop, val in pairs(props) do awful.tag.setproperty(t, prop, val) end
@@ -374,8 +407,43 @@ function set(t, args)
     return t
 end
 
-function shift_next() set(awful.tag.selected(), {rel_index = 1}) end
-function shift_prev() set(awful.tag.selected(), {rel_index = -1}) end
+function shifty.shift_next()
+  set(awful.tag.selected(), {rel_index = 1})
+  shifty.schedule_tag_statesave()
+end
+function shifty.shift_prev()
+  set(awful.tag.selected(), {rel_index = -1})
+  shifty.schedule_tag_statesave()
+end
+
+function shifty.view_tag_by_substr(name)
+    if name:len() > 0 then
+        local all_found = substr_name2tags(name,scr)
+        if all_found then
+            local found = all_found[1]
+            found:view_only()
+        end
+    end
+end
+
+function shifty.search_tag_interactive ()
+    local theme = beautiful.get()
+    local scr = awful.screen.focused()
+
+    -- http://awesome.naquadah.org/doc/api/modules/naughty.html <- awful.prompt.run luadoc
+    awful.prompt.run({
+        fg_cursor = '#ffffff', bg_cursor = '#000000', ul_cursor = "single",
+        prompt = 'T: ',
+        text = "",
+        history_path = awful.util.getdir("cache") .. "/history_tags",
+        exe_callback = shifty.view_tag_by_substr,
+	textbox = scr.mypromptbox
+        },
+        -- shifty.taglist[scr][shifty.tag2index(scr, t) * 2],
+        
+        shifty.completion -- should be a more appropriate completion function
+    )
+end
 
 --add : adds a tag
 --@param args: table of optional arguments
@@ -392,8 +460,8 @@ function shifty.add(args)
 
     -- unless forbidden or if first tag on the screen, show the tag
     if not (awful.tag.getproperty(t, "nopopup") or args.noswitch) or
-        #awful.tag.gettags(awful.tag.getscreen(t)) == 1 then
-        awful.tag.viewonly(t)
+        #t.screen.tags == 1 then
+        t:view_only()
     end
 
     -- get the name or rename
@@ -407,24 +475,25 @@ function shifty.add(args)
         local f
         local tmr
         if args.position then
-            f = function() shifty.rename(t, args.rename, true); tmr:stop() end
+            f = function()  shifty.rename(t, args.rename, true); tmr:stop()  end
         else
-            f = function() shifty.rename(t); tmr:stop() end
+            f = function()  shifty.rename(t); tmr:stop() end
         end
-        tmr = capi.timer({timeout = 0.01})
+        tmr = gears.timer({timeout = 0.01})
         tmr:connect_signal("timeout", f)
         tmr:start()
     end
 
+    shifty.schedule_tag_statesave()
     return t
 end
 
 --del : delete a tag
 --@param tag : the tag to be deleted [current tag]
 function shifty.del(tag)
-    local scr = (tag and awful.tag.getscreen(tag)) or capi.mouse.screen or 1
-    local tags = awful.tag.gettags(scr)
-    local sel = awful.tag.selected(scr)
+    local scr = (tag and tag.screen) or awful.screen.focused() or 1
+    local tags = scr.tags
+    local sel = scr.selected_tag
     local t = tag or sel
     local idx = tag2index(scr, t)
 
@@ -437,7 +506,8 @@ function shifty.del(tag)
     if #clients > sticky then return end
 
     -- store index for later
-    index_cache[scr][t.name] = idx
+    -- skrewz@20170208: commented, usefulness not clear:
+    --index_cache[scr][t.name] = idx
 
     -- remove tag
     awful.tag.delete(t)
@@ -447,13 +517,14 @@ function shifty.del(tag)
         awful.tag.history.restore(scr, 1)
         -- this is supposed to cycle if history is invalid?
         -- e.g. if many tags are deleted in a row
-        if not awful.tag.selected(scr) then
-            awful.tag.viewonly(tags[awful.util.cycle(#tags, idx - 1)])
+        if not scr.selected_tag then
+            tags[awful.util.cycle(#tags, idx - 1)]:view_only()
         end
     end
 
     -- FIXME: what is this for??
     if capi.client.focus then capi.client.focus:raise() end
+    shifty.schedule_tag_statesave()
 end
 
 --is_client_tagged : replicate behavior in tag.c - returns true if the
@@ -466,6 +537,7 @@ function is_client_tagged(tag, client)
     end
     return false
 end
+
 
 --match : handles app->tag matching, a replacement for the manage hook in
 --            rc.lua
@@ -480,7 +552,7 @@ function match(c, startup)
     local role = c.role
     local name = c.name
     local keys = shifty.config.clientkeys or c:keys() or {}
-    local target_screen = capi.mouse.screen
+    local target_screen = awful.screen.focused()
 
     c.border_color = beautiful.border_normal
     c.border_width = beautiful.border_width
@@ -645,7 +717,7 @@ function match(c, startup)
         awful.placement.no_offscreen(c)
     end
 
-    local sel = awful.tag.selectedlist(target_screen)
+    local sel = target_screen.selected_tags
     if not target_tag_names or #target_tag_names == 0 then
         -- if not matched to some names try putting
         -- client in c.transient_for or current tags
@@ -688,7 +760,7 @@ function match(c, startup)
                     tagged) or
                     (#t:clients() > mc))) or
                     intrusive then
-                    if awful.tag.getscreen(t) == mouse.screen then
+                    if t.screen == awful.screen.focused() then
                         table.insert(res, t)
                     end
                 end
@@ -705,7 +777,7 @@ function match(c, startup)
     end
 
     -- set client's screen/tag if needed
-    target_screen = awful.tag.getscreen(target_tags[1]) or target_screen
+    target_screen = target_tags[1].screen or target_screen
     if c.screen ~= target_screen then c.screen = target_screen end
     if slave then awful.client.setslave(c) end
     c:tags(target_tags)
@@ -773,8 +845,8 @@ end
 --sweep : hook function that marks tags as used, visited,
 --deserted also handles deleting used and empty tags
 function sweep()
-    for s = 1, capi.screen.count() do
-        for i, t in ipairs(awful.tag.gettags(s)) do
+  for s in screen do
+        for i, t in ipairs(s.tags) do
             local clients = t:clients()
             local sticky = 0
             for i, c in ipairs(clients) do
@@ -791,7 +863,7 @@ function sweep()
                             local f = function()
                                         shifty.del(t); tmr:stop()
                                     end
-                            tmr = capi.timer({timeout = delay})
+                            tmr = gears.timer({timeout = delay})
                             tmr:connect_signal("timeout", f)
                             tmr:start()
                         else
@@ -823,11 +895,11 @@ function shifty.getpos(pos, scr_arg)
     local v = nil
     local existing = {}
     local selected = nil
-    local scr = scr_arg or capi.mouse.screen or 1
+    local scr = scr_arg or awful.screen.focused() or 1
 
     -- search for existing tag assigned to pos
     for i = 1, capi.screen.count() do
-        for j, t in ipairs(awful.tag.gettags(i)) do
+        for j, t in ipairs(i.tags) do
             if awful.tag.getproperty(t, "position") == pos then
                 table.insert(existing, t)
                 if t.selected and i == scr then
@@ -841,7 +913,7 @@ function shifty.getpos(pos, scr_arg)
         -- if there is no selected tag on current screen, look for the first one
         if not selected then
             for _, tag in pairs(existing) do
-                if awful.tag.getscreen(tag) == scr then return tag end
+                if tag.screen == scr then return tag end
             end
 
             -- no tag found, loop through the other tags
@@ -854,13 +926,13 @@ function shifty.getpos(pos, scr_arg)
             i = awful.util.cycle(#existing, i + 1)
             tag = existing[i]
 
-            if (scr_arg == nil or awful.tag.getscreen(tag) == scr_arg) and not tag.selected then return tag end
+            if (scr_arg == nil or tag.screen == scr_arg) and not tag.selected then return tag end
         until i == selected
 
         -- if the screen is not specified or
         -- if a selected tag exists on the specified screen
         -- return the selected tag
-        if scr_arg == nil or awful.tag.getscreen(existing[selected]) == scr then return existing[selected] end
+        if scr_arg == nil or existing[selected].screen == scr then return existing[selected] end
 
         -- if scr_arg ~= nil and no tag exists on this screen, continue
     end
@@ -1008,10 +1080,11 @@ function completion(cmd, cur_pos, ncomp, sources, matchers)
         -- current screen
         existing = function()
             local ret = {}
-            for i = 1, capi.screen.count() do
-                local s = awful.util.cycle(capi.screen.count(),
-                                            capi.mouse.screen + i - 1)
-                local tags = awful.tag.gettags(s)
+            for s in screen do
+            --for i = 1, capi.screen.count() do
+            --    local s = awful.util.cycle(capi.screen.count(),
+            --                                capi.mouse.screen + i - 1)
+                local tags = s.tags
                 for j, t in pairs(tags) do
                     table.insert(ret, t.name)
                 end
@@ -1073,7 +1146,7 @@ end
 
 -- tagkeys : hook function that sets keybindings per tag
 function tagkeys(s)
-    local sel = awful.tag.selected(s.index)
+    local sel = s.selected_tag
     local keys = awful.tag.getproperty(sel, "keys") or
                     shifty.config.globalkeys
     if keys and sel.selected then capi.root.keys(keys) end
@@ -1102,10 +1175,77 @@ function getlayout(name)
         end
     end
 end
+-- save tags state:
+local save_tags_tmr
+function shifty.save_tag_names()
+  --local naughty   = require("naughty")
+  --naughty.notify({ title = "Timer fired", text = "Ran save_tag_names", timeout = 1 })
+  persistence_file = awful.util.getdir("cache") .. "/tags_state_persistence2"
+  local f = assert(io.open(persistence_file, "w"))
+  for s in screen do
+    for i, t in ipairs(s.tags) do
+      -- skrewz@20170202: disabling f.write temporarily
+      f:write(s.index .. ":".. t.name .. "\n")
+    end
+  end
+  f:close()
+end
+-- helper function to merely background the task
+function shifty.schedule_tag_statesave()
+  if save_tags_tmr then
+    save_tags_tmr:stop()
+    save_tags_tmr = nil
+  end
+  save_tags_tmr = gears.timer({timeout = 2.00})
+  save_tags_tmr:connect_signal("timeout", function()
+    save_tags_tmr:stop()
+    shifty.save_tag_names();
+    save_tags_tmr = nil
+  end)
+  save_tags_tmr:start()
+end
+
+
+-- restore tags state
+--[[
+skrewz@20170208: really, this is best-effort: the screen objects are not
+supposed to be used by index anymore (and there's good reason for that!) but
+this creates a bridge from Awesome 3.5 to 4.0 here.
+
+A more viable approach might be to identify screens by their s.geometry
+coordinates---and hope that these don't change between restarts?
+--]]
+function shifty.restore_saved_tag_names()
+  for s in screen do
+    for i, t in ipairs(s.tags) do
+      shifty.del(t)
+    end
+  end
+  persistence_file = awful.util.getdir("cache") .. "/tags_state_persistence"
+  local ret = {}
+  local f = io.open(persistence_file, "r")
+  if f then
+    for line in f:lines() do
+      local screen_index, _   = tonumber(string.gsub(line,"(%d+):(.+)","%1"),10)
+      local n, _   = string.gsub(line,"(%d+):(.+)","%2")
+      shifty.add({
+        name = n,
+        persist = true,
+        screen = screen[screen_index],
+        -- TODO:
+        --layout = j.layout,
+        --mwfact = j.mwfact})
+      })
+    end
+  end
+  f:close()
+  return ret
+end
 
 -- add signals before using them
 -- Note: these signals are emitted when tag properties
 -- are accessed through awful.tag.setproperty
+--[[
 capi.tag.add_signal("property::initial")
 capi.tag.add_signal("property::used")
 capi.tag.add_signal("property::visited")
@@ -1122,6 +1262,7 @@ capi.tag.add_signal("property::max_clients")
 capi.tag.add_signal("property::icon_only")
 capi.tag.add_signal("property::sweep_delay")
 capi.tag.add_signal("property::overload_keys")
+--]]
 
 -- replace awful's default hook
 capi.client.connect_signal("manage", match)
