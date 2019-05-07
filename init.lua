@@ -16,9 +16,7 @@ local awful = require("awful")
 local wibox = require("wibox")
 local pairs = pairs
 local io = io
-local math = math
 local tonumber = tonumber
-local dbg= dbg
 local capi = {
     client = client,
     tag = tag,
@@ -180,7 +178,7 @@ function send(idx)
     local sel_idx = tag2index(scr, sel)
     local tags = scr.tags
     local target = awful.util.cycle(#tags, sel_idx + idx)
-    awful.client.movetotag(tags[target], capi.client.focus)
+    capi.client.focus:move_to_tag(tags[target])
     tags[target]:view_only()
 end
 
@@ -1180,7 +1178,7 @@ local save_tags_tmr
 function shifty.save_tag_names()
   --local naughty   = require("naughty")
   --naughty.notify({ title = "Timer fired", text = "Ran save_tag_names", timeout = 1 })
-  persistence_file = awful.util.getdir("cache") .. "/tags_state_persistence2"
+  persistence_file = awful.util.getdir("cache") .. "/tags_state_persistence"
   local f = assert(io.open(persistence_file, "w"))
   for s in screen do
     for i, t in ipairs(s.tags) do
