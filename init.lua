@@ -1235,8 +1235,8 @@ function shifty.restore_saved_tag_names()
         --mwfact = j.mwfact})
       })
     end
+    f:close()
   end
-  f:close()
   return ret
 end
 
