@@ -87,7 +87,7 @@ end
 -- @param needle: what to search for
 -- @param scr: which screen to search in
 -- @return: table of tag objects or nil
-function substr_name2tags (needle,scr)
+function substr_name2tags (needle)
     local ret = {}
     local try_screens = {}
     -- FIXME: respect any pased scr
@@ -416,7 +416,7 @@ end
 
 function shifty.view_tag_by_substr(name)
     if name:len() > 0 then
-        local all_found = substr_name2tags(name,scr)
+        local all_found = substr_name2tags(name)
         if all_found then
             local found = all_found[1]
             found:view_only()
@@ -424,18 +424,82 @@ function shifty.view_tag_by_substr(name)
     end
 end
 
+function shifty.update_tagsearch_results(searchstring)
+  local matches = nil
+  search_tag_completion:reset()
+
+  if searchstring and '' ~= searchstring then
+    matches = substr_name2tags(searchstring)
+  end
+
+  if not matches then
+    search_tag_promptwibox.border_color = '#ff7777'
+    search_tag_promptwibox.bg           = '#ff7777'
+    search_tag_completion:add(
+      wibox.widget.textbox(
+        '<span background="red" font_size="larger">(no matches)</span>',
+        false
+      )
+    )
+  else
+    if 1 == #matches then
+      search_tag_promptwibox.border_color = '#77aa77'
+      search_tag_promptwibox.bg           = '#77aa77'
+    else
+      search_tag_promptwibox.border_color = '#777777'
+      search_tag_promptwibox.bg           = '#777777'
+    end
+    local colour
+    for i, t in ipairs(matches) do
+      if 1 == i then
+        colour = 'lightgreen'
+      else
+        colour = 'red'
+      end
+      search_tag_completion:add(
+        wibox.widget.textbox(
+          t.name:gsub('(.*)('..searchstring..')(.*)','%1<span foreground="'..colour..'">%2</span>%3'),
+          false
+        )
+      )
+    end
+  end
+end
+
+search_tag_promptbox = wibox.widget.textbox()
+search_tag_completion = wibox.layout.fixed.vertical()
+
+search_tag_promptwibox = awful.popup {
+    widget = {
+      search_tag_promptbox,
+      search_tag_completion,
+      layout = wibox.layout.fixed.vertical,
+    },
+    border_width   = 10,
+    minimum_height = 100,
+    minimum_width  = 600,
+    ontop          = true,
+    placement      = awful.placement.centered,
+    visible        = false,
+    shape          = gears.shape.rounded_rect
+}
 function shifty.search_tag_interactive ()
     local theme = beautiful.get()
     local scr = awful.screen.focused()
 
     -- http://awesome.naquadah.org/doc/api/modules/naughty.html <- awful.prompt.run luadoc
+    search_tag_promptwibox.visible = true
+
+    shifty.update_tagsearch_results(nil)
     awful.prompt.run({
-        fg_cursor = '#ffffff', bg_cursor = '#000000', ul_cursor = "single",
-        prompt = 'T: ',
+        fg_cursor = '#ffffff', ul_cursor = "single",
+        prompt = 'tag search: ',
         text = "",
         history_path = awful.util.getdir("cache") .. "/history_tags",
         exe_callback = shifty.view_tag_by_substr,
-	textbox = scr.mypromptbox
+        done_callback = function () search_tag_promptwibox.visible = false end,
+        changed_callback = shifty.update_tagsearch_results,
+	textbox = search_tag_promptbox
         },
         -- shifty.taglist[scr][shifty.tag2index(scr, t) * 2],
         
@@ -508,7 +572,7 @@ function shifty.del(tag)
     --index_cache[scr][t.name] = idx
 
     -- remove tag
-    awful.tag.delete(t)
+    t:delete()
 
     -- if the current tag is being deleted, restore from history
     if t == sel and #tags > 1 then
@@ -1147,7 +1211,7 @@ function tagkeys(s)
     local sel = s.selected_tag
     local keys = awful.tag.getproperty(sel, "keys") or
                     shifty.config.globalkeys
-    if keys and sel.selected then capi.root.keys(keys) end
+    if keys and sel and sel.selected then capi.root.keys(keys) end
 end
 
 -- squash_keys: helper function which removes duplicate
