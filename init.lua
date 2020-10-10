@@ -424,41 +424,67 @@ function shifty.view_tag_by_substr(name)
     end
 end
 
-function shifty.update_tagsearch_results(searchstring)
-  local matches = nil
-  search_tag_completion:reset()
+function shifty.retrieve_tags_matching(searchstring,formatted,relative_to_screen)
+  local tags_matched = nil
+  local string_matches = {}
+  if nil == formatted then formatted = true end
+  assert(nil == relative_to_screen) -- unsupported as of yet
 
   if searchstring and '' ~= searchstring then
-    matches = substr_name2tags(searchstring)
+    tags_matched = substr_name2tags(searchstring)
+    if tags_matched then
+      for i, t in ipairs(tags_matched) do
+        if 1 == i then
+          colour = 'lightgreen'
+        else
+          colour = 'red'
+        end
+        if formatted then
+          string_matches[t.name] = t.name:gsub('(.*)('..searchstring..')(.*)','%1<span foreground="'..colour..'">%2</span>%3')
+        else
+          string_matches[t.name] = t.name
+        end
+      end
+    end
+  end
+  return string_matches
+end
+
+function shifty.update_search_results(layout, search_fn, searchstring)
+  local matches = nil
+  layout:reset()
+
+  if searchstring and '' ~= searchstring then
+    print("conducting search on searchstring="..searchstring)
+    matches = search_fn(searchstring,true)
+    for key,value in pairs(matches) do print(key,value) end
   end
 
   if not matches then
     search_tag_promptwibox.border_color = '#ff7777'
     search_tag_promptwibox.bg           = '#ff7777'
-    search_tag_completion:add(
+    layout:add(
       wibox.widget.textbox(
         '<span background="red" font_size="larger">(no matches)</span>',
         false
       )
     )
   else
-    if 1 == #matches then
+    local count = 0
+    for _, _ in pairs(matches) do count = count + 1 end
+    print("count="..count)
+
+    if 1 == count then
       search_tag_promptwibox.border_color = '#77aa77'
       search_tag_promptwibox.bg           = '#77aa77'
     else
       search_tag_promptwibox.border_color = '#777777'
       search_tag_promptwibox.bg           = '#777777'
     end
-    local colour
-    for i, t in ipairs(matches) do
-      if 1 == i then
-        colour = 'lightgreen'
-      else
-        colour = 'red'
-      end
-      search_tag_completion:add(
+    for res, formatted in pairs(matches) do
+      layout:add(
         wibox.widget.textbox(
-          t.name:gsub('(.*)('..searchstring..')(.*)','%1<span foreground="'..colour..'">%2</span>%3'),
+          formatted,
           false
         )
       )
@@ -483,6 +509,7 @@ search_tag_promptwibox = awful.popup {
     visible        = false,
     shape          = gears.shape.rounded_rect
 }
+
 function shifty.search_tag_interactive ()
     local theme = beautiful.get()
     local scr = awful.screen.focused()
@@ -490,7 +517,6 @@ function shifty.search_tag_interactive ()
     -- http://awesome.naquadah.org/doc/api/modules/naughty.html <- awful.prompt.run luadoc
     search_tag_promptwibox.visible = true
 
-    shifty.update_tagsearch_results(nil)
     awful.prompt.run({
         fg_cursor = '#ffffff', ul_cursor = "single",
         prompt = 'tag search: ',
@@ -498,7 +524,12 @@ function shifty.search_tag_interactive ()
         history_path = awful.util.getdir("cache") .. "/history_tags",
         exe_callback = shifty.view_tag_by_substr,
         done_callback = function () search_tag_promptwibox.visible = false end,
-        changed_callback = shifty.update_tagsearch_results,
+        changed_callback = function(now)
+          shifty.update_search_results(
+            search_tag_completion,
+            shifty.retrieve_tags_matching,
+            now)
+        end,
 	textbox = search_tag_promptbox
         },
         -- shifty.taglist[scr][shifty.tag2index(scr, t) * 2],
