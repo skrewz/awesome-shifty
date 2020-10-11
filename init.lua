@@ -430,26 +430,6 @@ function shifty.shift_prev()
   shifty.schedule_tag_statesave()
 end
 
-function shifty.view_tag_by_substr(name)
-    if name:len() > 0 then
-        local all_found = substr_name2tags(name)
-        if all_found then
-            local found = all_found[1]
-            found:view_only()
-        end
-    end
-end
-
-function shifty.view_client_by_substr(name)
-    if name:len() > 0 then
-        local all_found = substr_name2clients(name)
-        if all_found then
-            local found = all_found[1]
-            found:jump_to()
-        end
-    end
-end
-
 function surround_infix_insensitive(input,pre,search,post)
   m_start, m_end = string.find(input:lower(),search:lower())
   if m_start then
@@ -591,7 +571,17 @@ function shifty.search_client_interactive ()
         fg_cursor = '#ffffff', ul_cursor = "single",
         prompt = 'client search: ',
         text = "",
-        exe_callback = shifty.view_client_by_substr,
+        exe_callback = function(input)
+          local tags = shifty.retrieve_clients_matching(input)
+          local dest_client = nil
+          for formatted, t in pairs(tags) do
+            dest_client = t
+            break
+          end
+          if dest_client then
+            dest_client:jump_to()
+          end
+        end,
         done_callback = function () search_promptwibox.visible = false end,
         changed_callback = function(now)
           shifty.update_search_results(
@@ -610,7 +600,17 @@ function shifty.search_tag_interactive ()
         fg_cursor = '#ffffff', ul_cursor = "single",
         prompt = 'tag search: ',
         text = "",
-        exe_callback = shifty.view_tag_by_substr,
+        exe_callback = function(input)
+          local tags = shifty.retrieve_tags_matching(input)
+          local dest_tag = nil
+          for formatted, t in pairs(tags) do
+            dest_tag = t
+            break
+          end
+          if dest_tag then
+            dest_tag:view_only()
+          end
+        end,
         done_callback = function () search_promptwibox.visible = false end,
         changed_callback = function(now)
           shifty.update_search_results(
