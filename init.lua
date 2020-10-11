@@ -110,7 +110,7 @@ function substr_name2clients (needle)
     local try_screens = {}
     -- FIXME: respect any pased scr
     for _, c in ipairs(client.get()) do
-      if string.find(c.name:lower(),needle:lower()) then
+      if string.find(c.class:lower()..' '..c.name:lower(),needle:lower()) then
           table.insert(ret, c)
       end
     end
@@ -511,13 +511,13 @@ function shifty.retrieve_clients_matching(searchstring,formatted,relative_to_scr
         colour = 'red'
       end
       if formatted then
-        string_matches[c.name] = surround_infix_insensitive(
-          c.name,
+        string_matches[c.class..' '..c.name] = surround_infix_insensitive(
+          c.class..' '..c.name,
           '<span foreground="'..colour..'">',
           searchstring,
           '</span>')
       else
-        string_matches[c.name] = c.name
+        string_matches[c.class..' '..c.name] = c.class..' '..c.name
       end
     end
   end
