@@ -479,13 +479,13 @@ function shifty.retrieve_tags_matching(searchstring,formatted,relative_to_screen
           colour = 'red'
         end
         if formatted then
-        string_matches[t.name] = surround_infix_insensitive(
-          t.name,
-          '<span foreground="'..colour..'">',
-          searchstring,
-          '</span>')
+          string_matches[surround_infix_insensitive(
+            t.name,
+            '<span foreground="'..colour..'">',
+            searchstring,
+            '</span>')] = t
         else
-          string_matches[t.name] = t.name
+          string_matches[t.name] = t
         end
       end
     end
@@ -511,13 +511,13 @@ function shifty.retrieve_clients_matching(searchstring,formatted,relative_to_scr
         colour = 'red'
       end
       if formatted then
-        string_matches[c.class..' '..c.name] = surround_infix_insensitive(
+        string_matches[surround_infix_insensitive(
           c.class..' '..c.name,
           '<span foreground="'..colour..'">',
           searchstring,
-          '</span>')
+          '</span>')] = c
       else
-        string_matches[c.class..' '..c.name] = c.class..' '..c.name
+        string_matches[c.class..' '..c.name] = c
       end
     end
   end
@@ -527,13 +527,17 @@ end
 
 function shifty.update_search_results(layout, search_fn, searchstring)
   local matches = nil
+  local num_matches = 0
   layout:reset()
 
   if searchstring and '' ~= searchstring then
     matches = search_fn(searchstring,true)
+    if matches then
+      for _, _ in pairs(matches) do num_matches = num_matches + 1 end
+    end
   end
 
-  if not matches then
+  if 0 == num_matches then
     search_promptwibox.border_color = '#ff7777'
     search_promptwibox.bg           = '#ff7777'
     layout:add(
@@ -542,25 +546,23 @@ function shifty.update_search_results(layout, search_fn, searchstring)
         false
       )
     )
+    return
+  elseif 1 == num_matches then
+    search_promptwibox.border_color = '#77aa77'
+    search_promptwibox.bg           = '#77aa77'
   else
-    local count = 0
-    for _, _ in pairs(matches) do count = count + 1 end
+    search_promptwibox.border_color = '#777777'
+    search_promptwibox.bg           = '#777777'
+  end
 
-    if 1 == count then
-      search_promptwibox.border_color = '#77aa77'
-      search_promptwibox.bg           = '#77aa77'
-    else
-      search_promptwibox.border_color = '#777777'
-      search_promptwibox.bg           = '#777777'
-    end
-    for res, formatted in pairs(matches) do
-      layout:add(
-        wibox.widget.textbox(
-          formatted,
-          false
-        )
+  -- second part of pair has generic type; rely only on key:
+  for formatted, _ in pairs(matches) do
+    layout:add(
+      wibox.widget.textbox(
+        formatted,
+        false
       )
-    end
+    )
   end
 end
 
@@ -609,6 +611,38 @@ function shifty.search_tag_interactive ()
         prompt = 'tag search: ',
         text = "",
         exe_callback = shifty.view_tag_by_substr,
+        done_callback = function () search_promptwibox.visible = false end,
+        changed_callback = function(now)
+          shifty.update_search_results(
+            search_completion,
+            shifty.retrieve_tags_matching,
+            now)
+        end,
+	textbox = search_promptbox
+        }
+    )
+end
+
+function shifty.move_marked_to_tag_interactive()
+    search_promptwibox.visible = true
+    shifty.update_search_results(search_completion, nil, nil)
+    awful.prompt.run({
+        fg_cursor = '#ffffff', ul_cursor = "single",
+        prompt = 'send marked to tag: ',
+        text = "",
+        exe_callback = function(input)
+          local tags = shifty.retrieve_tags_matching(input)
+          local dest_tag = nil
+          for formatted, t in pairs(tags) do
+            dest_tag = t
+            break
+          end
+          if dest_tag then
+            for _, c in ipairs(awful.client.getmarked()) do
+              c:move_to_tag(dest_tag)
+            end
+          end
+        end,
         done_callback = function () search_promptwibox.visible = false end,
         changed_callback = function(now)
           shifty.update_search_results(
