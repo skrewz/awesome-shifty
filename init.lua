@@ -93,10 +93,26 @@ function substr_name2tags (needle)
     -- FIXME: respect any pased scr
     for s in screen do
         for i, t in ipairs(s.tags) do
-            if string.find(t.name,needle) then
+            if string.find(t.name:lower(),needle:lower()) then
                 table.insert(ret, t)
             end
         end
+    end
+    if #ret > 0 then return ret end
+end
+
+--substr_name2clients: finds clients by substring of name
+-- @param needle: what to search for
+-- @param scr: which screen to search in
+-- @return: table of client objects or nil
+function substr_name2clients (needle)
+    local ret = {}
+    local try_screens = {}
+    -- FIXME: respect any pased scr
+    for _, c in ipairs(client.get()) do
+      if string.find(c.name:lower(),needle:lower()) then
+          table.insert(ret, c)
+      end
     end
     if #ret > 0 then return ret end
 end
@@ -424,6 +440,29 @@ function shifty.view_tag_by_substr(name)
     end
 end
 
+function shifty.view_client_by_substr(name)
+    if name:len() > 0 then
+        local all_found = substr_name2clients(name)
+        if all_found then
+            local found = all_found[1]
+            found:jump_to()
+        end
+    end
+end
+
+function surround_infix_insensitive(input,pre,search,post)
+  m_start, m_end = string.find(input:lower(),search:lower())
+  if m_start then
+    return input:sub(0,m_start-1)
+      ..pre
+      ..input:sub(m_start,m_end)
+      ..post
+      ..input:sub(m_end+1,string.len(input))
+  else
+    return input
+  end
+end
+
 function shifty.retrieve_tags_matching(searchstring,formatted,relative_to_screen)
   local tags_matched = nil
   local string_matches = {}
@@ -440,7 +479,11 @@ function shifty.retrieve_tags_matching(searchstring,formatted,relative_to_screen
           colour = 'red'
         end
         if formatted then
-          string_matches[t.name] = t.name:gsub('(.*)('..searchstring..')(.*)','%1<span foreground="'..colour..'">%2</span>%3')
+        string_matches[t.name] = surround_infix_insensitive(
+          t.name,
+          '<span foreground="'..colour..'">',
+          searchstring,
+          '</span>')
         else
           string_matches[t.name] = t.name
         end
@@ -450,19 +493,49 @@ function shifty.retrieve_tags_matching(searchstring,formatted,relative_to_screen
   return string_matches
 end
 
+function shifty.retrieve_clients_matching(searchstring,formatted,relative_to_screen)
+  local clients_matched = nil
+  local string_matches = {}
+  if nil == formatted then formatted = true end
+  assert(nil == relative_to_screen) -- unsupported as of yet
+
+  if searchstring and '' ~= searchstring then
+    clients_matched = substr_name2clients(searchstring)
+  end
+
+  if clients_matched then
+    for i, c in ipairs(clients_matched) do
+      if 1 == i then
+        colour = 'lightgreen'
+      else
+        colour = 'red'
+      end
+      if formatted then
+        string_matches[c.name] = surround_infix_insensitive(
+          c.name,
+          '<span foreground="'..colour..'">',
+          searchstring,
+          '</span>')
+      else
+        string_matches[c.name] = c.name
+      end
+    end
+  end
+  return string_matches
+end
+--]]
+
 function shifty.update_search_results(layout, search_fn, searchstring)
   local matches = nil
   layout:reset()
 
   if searchstring and '' ~= searchstring then
-    print("conducting search on searchstring="..searchstring)
     matches = search_fn(searchstring,true)
-    for key,value in pairs(matches) do print(key,value) end
   end
 
   if not matches then
-    search_tag_promptwibox.border_color = '#ff7777'
-    search_tag_promptwibox.bg           = '#ff7777'
+    search_promptwibox.border_color = '#ff7777'
+    search_promptwibox.bg           = '#ff7777'
     layout:add(
       wibox.widget.textbox(
         '<span background="red" font_size="larger">(no matches)</span>',
@@ -472,14 +545,13 @@ function shifty.update_search_results(layout, search_fn, searchstring)
   else
     local count = 0
     for _, _ in pairs(matches) do count = count + 1 end
-    print("count="..count)
 
     if 1 == count then
-      search_tag_promptwibox.border_color = '#77aa77'
-      search_tag_promptwibox.bg           = '#77aa77'
+      search_promptwibox.border_color = '#77aa77'
+      search_promptwibox.bg           = '#77aa77'
     else
-      search_tag_promptwibox.border_color = '#777777'
-      search_tag_promptwibox.bg           = '#777777'
+      search_promptwibox.border_color = '#777777'
+      search_promptwibox.bg           = '#777777'
     end
     for res, formatted in pairs(matches) do
       layout:add(
@@ -492,13 +564,13 @@ function shifty.update_search_results(layout, search_fn, searchstring)
   end
 end
 
-search_tag_promptbox = wibox.widget.textbox()
-search_tag_completion = wibox.layout.fixed.vertical()
+search_promptbox = wibox.widget.textbox()
+search_completion = wibox.layout.fixed.vertical()
 
-search_tag_promptwibox = awful.popup {
+search_promptwibox = awful.popup {
     widget = {
-      search_tag_promptbox,
-      search_tag_completion,
+      search_promptbox,
+      search_completion,
       layout = wibox.layout.fixed.vertical,
     },
     border_width   = 10,
@@ -510,31 +582,42 @@ search_tag_promptwibox = awful.popup {
     shape          = gears.shape.rounded_rect
 }
 
+function shifty.search_client_interactive ()
+    search_promptwibox.visible = true
+    shifty.update_search_results(search_completion, nil, nil)
+    awful.prompt.run({
+        fg_cursor = '#ffffff', ul_cursor = "single",
+        prompt = 'client search: ',
+        text = "",
+        exe_callback = shifty.view_client_by_substr,
+        done_callback = function () search_promptwibox.visible = false end,
+        changed_callback = function(now)
+          shifty.update_search_results(
+            search_completion,
+            shifty.retrieve_clients_matching,
+            now)
+        end,
+	textbox = search_promptbox
+        }
+    )
+end
 function shifty.search_tag_interactive ()
-    local theme = beautiful.get()
-    local scr = awful.screen.focused()
-
-    -- http://awesome.naquadah.org/doc/api/modules/naughty.html <- awful.prompt.run luadoc
-    search_tag_promptwibox.visible = true
-
+    search_promptwibox.visible = true
+    shifty.update_search_results(search_completion, nil, nil)
     awful.prompt.run({
         fg_cursor = '#ffffff', ul_cursor = "single",
         prompt = 'tag search: ',
         text = "",
-        history_path = awful.util.getdir("cache") .. "/history_tags",
         exe_callback = shifty.view_tag_by_substr,
-        done_callback = function () search_tag_promptwibox.visible = false end,
+        done_callback = function () search_promptwibox.visible = false end,
         changed_callback = function(now)
           shifty.update_search_results(
-            search_tag_completion,
+            search_completion,
             shifty.retrieve_tags_matching,
             now)
         end,
-	textbox = search_tag_promptbox
-        },
-        -- shifty.taglist[scr][shifty.tag2index(scr, t) * 2],
-        
-        shifty.completion -- should be a more appropriate completion function
+	textbox = search_promptbox
+        }
     )
 end
 
